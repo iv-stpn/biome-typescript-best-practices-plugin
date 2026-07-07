@@ -1,0 +1,7 @@
+[
+  { "line": 1, "rule": "no-as-cast" },
+  { "line": 2, "rule": "no-as-cast" },
+  { "line": 3, "rule": "no-as-cast" },
+  { "line": 4, "rule": "no-as-cast" },
+  { "line": 4, "rule": "no-as-cast" }
+]

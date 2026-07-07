@@ -1,0 +1,45 @@
+{
+  "name": "biome-typescript-best-practices-plugin",
+  "version": "1.0.0",
+  "description": "Biome plugin that enforces TypeScript best practices — no `as` assertions, no `in` operator, no empty-object reduce accumulators, no enums, no dynamic delete, and safe array sorting.",
+  "license": "ISC",
+  "author": "Ivan Stepanian <iv.stpn@gmail.com>",
+  "type": "commonjs",
+  "keywords": [
+    "biome",
+    "biome-plugin",
+    "gritql",
+    "lint",
+    "typescript",
+    "best-practices",
+    "type-safety"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iv-stpn/biome-typescript-best-practices-plugin.git"
+  },
+  "homepage": "https://github.com/iv-stpn/biome-typescript-best-practices-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/iv-stpn/biome-typescript-best-practices-plugin/issues"
+  },
+  "files": [
+    "typescript.grit",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node scripts/run-tests.mjs",
+    "typecheck": "tsc --noEmit",
+    "version": "changeset version",
+    "release": "changeset publish"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.2",
+    "@changesets/cli": "2.31.0",
+    "@types/node": "^26",
+    "typescript": "^6"
+  }
+}

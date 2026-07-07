@@ -1,0 +1,131 @@
+engine biome(1.0)
+language js
+
+// biome-typescript-best-practices-plugin: TypeScript safety & clarity rules.
+//
+// A set of best-practice checks that are NOT part of Biome's default/recommended
+// linter but that push TypeScript towards safer, clearer code. Every rule reports
+// a diagnostic only (no auto-fix): the correct rewrite is context-specific, so the
+// plugin flags the hazard and leaves the fix to the author.
+//
+// Rules:
+//   ts/no-as-cast                 — `expr as T` type assertions (bypasses the checker).
+//   ts/no-in-operator             — the `in` operator and `for...in` (prototype-chain traps).
+//   ts/no-empty-object-accumulator — `reduce(..., {})` with a plain-object accumulator.
+//   ts/no-enum                    — `enum` / `const enum` declarations.
+//   ts/no-dynamic-delete          — `delete obj[expr]` with a computed, non-literal key.
+//   ts/require-array-sort-compare — `.sort()` / `.toSorted()` with no comparator.
+//
+// Inspired by biome-plugin-no-type-assertion and felixarntz/biome's GritQL rules.
+
+// A `.sort` / `.toSorted` member name.
+pattern sort_method_name() {
+    or { `sort`, `toSorted` }
+}
+
+or {
+    // Rule: ts/no-as-cast
+    // Bad:  const el = document.getElementById("x") as HTMLInputElement;
+    // Good: use a type guard, a runtime check, or `satisfies` for validation.
+    // `as` assertions silence the type checker and can mask real bugs. `as const`
+    // is a legitimate literal-narrowing form and is left alone.
+    TsAsExpression(ty = $type) as $node where {
+        not $type <: TsReferenceType(name = `const`),
+        register_diagnostic(
+            span = $node,
+            message = "[ts/no-as-cast] Avoid `as` type assertions — they bypass the type checker and can hide real type errors. Use a type guard, a runtime check, or `satisfies` to validate a value. (`as const` is allowed.)",
+            severity = "warn"
+        )
+    },
+
+    // Rule: ts/no-in-operator
+    // Bad:  if ("id" in obj) { ... }        for (const k in obj) { ... }
+    // Good: if (Object.hasOwn(obj, "id"))   for (const k of Object.keys(obj))
+    // `in` walks the prototype chain, so inherited/polluted keys match too, and it
+    // gives no type narrowing you can rely on across shapes.
+    or {
+        JsInExpression() as $node where {
+            register_diagnostic(
+                span = $node,
+                message = "[ts/no-in-operator] Avoid the `in` operator — it walks the prototype chain and matches inherited keys. Use Object.hasOwn(obj, key) for an own-property check.",
+                severity = "warn"
+            )
+        },
+        JsForInStatement() as $node where {
+            register_diagnostic(
+                span = $node,
+                message = "[ts/no-in-operator] Avoid `for...in` — it iterates inherited enumerable keys. Use `for (const k of Object.keys(obj))` (or Object.entries) instead.",
+                severity = "warn"
+            )
+        }
+    },
+
+    // Rule: ts/no-empty-object-accumulator
+    // Bad:  items.reduce((acc, x) => { acc[x.k] = x.v; return acc; }, {})
+    // Good: new Map(items.map((x) => [x.k, x.v]))   or   Object.create(null)
+    // A plain `{}` accumulator carries Object.prototype, so dynamic keys like
+    // "__proto__" / "constructor" leak into aggregation. A Map (or a null-proto
+    // object) has no such surface.
+    JsCallExpression(
+        callee = JsStaticMemberExpression(member = $method),
+        arguments = JsCallArguments(args = $args)
+    ) as $call where {
+        $method <: or { `reduce`, `reduceRight` },
+        $args <: [$_, $init],
+        $init <: JsObjectExpression(members = $members),
+        $members <: [],
+        register_diagnostic(
+            span = $call,
+            message = "[ts/no-empty-object-accumulator] Avoid a `{}` accumulator in reduce — its prototype chain lets keys like \"__proto__\" leak into dynamic-key aggregation. Use `new Map()` or `Object.create(null)`.",
+            severity = "warn"
+        )
+    },
+
+    // Rule: ts/no-enum
+    // Bad:  enum Color { Red, Green }        const enum Dir { Up, Down }
+    // Good: const Color = { Red: "red", Green: "green" } as const;
+    //       type Color = (typeof Color)[keyof typeof Color];
+    // `enum` emits runtime code, has surprising numeric/string semantics, and
+    // `const enum` breaks under isolatedModules. A `const` object + union type is
+    // safer and erasable.
+    TsEnumDeclaration() as $node where {
+        register_diagnostic(
+            span = $node,
+            message = "[ts/no-enum] Avoid `enum` — it emits runtime code and has surprising semantics (and `const enum` breaks isolatedModules). Prefer a `const` object with `as const` plus a derived union type.",
+            severity = "warn"
+        )
+    },
+
+    // Rule: ts/no-dynamic-delete
+    // Bad:  delete obj[key];   delete obj[getKey()];
+    // Good: model the field as optional (`v?: T`) or use a Map and `.delete(key)`.
+    // Deleting a computed, non-literal key deoptimises the object's shape and often
+    // signals that a Map was the right structure. Literal keys are left alone.
+    `delete $target` as $node where {
+        $target <: JsComputedMemberExpression(member = $key),
+        not $key <: or { JsStringLiteralExpression(), JsNumberLiteralExpression() },
+        register_diagnostic(
+            span = $node,
+            message = "[ts/no-dynamic-delete] Avoid `delete` with a computed key — it deoptimises the object shape. Model the property as optional, or use a Map with `.delete(key)`.",
+            severity = "warn"
+        )
+    },
+
+    // Rule: ts/require-array-sort-compare
+    // Bad:  [3, 20, 100].sort()   // → [100, 20, 3] (lexicographic!)
+    // Good: [3, 20, 100].sort((a, b) => a - b)
+    // `Array#sort` / `toSorted` with no comparator sorts by UTF-16 code unit, so
+    // numbers come out in the wrong order. Always pass an explicit comparator.
+    JsCallExpression(
+        callee = JsStaticMemberExpression(member = $method),
+        arguments = JsCallArguments(args = $args)
+    ) as $call where {
+        $method <: sort_method_name(),
+        $args <: [],
+        register_diagnostic(
+            span = $call,
+            message = "[ts/require-array-sort-compare] `.sort()` / `.toSorted()` with no comparator sorts lexicographically, so numbers sort wrong (e.g. [3,20,100] → [100,20,3]). Pass a compare function, e.g. .sort((a, b) => a - b).",
+            severity = "warn"
+        )
+    }
+}

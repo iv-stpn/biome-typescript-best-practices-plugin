@@ -1,0 +1,4 @@
+[
+  { "line": 1, "rule": "no-empty-object-accumulator" },
+  { "line": 2, "rule": "no-empty-object-accumulator" }
+]

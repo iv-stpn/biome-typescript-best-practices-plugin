@@ -1,0 +1,5 @@
+[
+  { "line": 1, "rule": "no-dynamic-delete" },
+  { "line": 2, "rule": "no-dynamic-delete" },
+  { "line": 3, "rule": "no-dynamic-delete" }
+]

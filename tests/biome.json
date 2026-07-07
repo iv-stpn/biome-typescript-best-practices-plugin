@@ -1,0 +1,8 @@
+{
+	"plugins": ["../typescript.grit"],
+	"linter": {
+		"rules": {
+			"recommended": false
+		}
+	}
+}

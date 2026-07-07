@@ -1,0 +1,4 @@
+[
+  { "line": 1, "rule": "no-enum" },
+  { "line": 2, "rule": "no-enum" }
+]
