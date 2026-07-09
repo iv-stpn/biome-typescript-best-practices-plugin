@@ -1,5 +1,6 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "plugins": ["./node_modules/biome-one-liner-plugin/oneLiner.grit"],
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
@@ -23,6 +24,7 @@
       "**/*.md",
       "!example.ts",
       "!tests",
+      "!scratch",
       "!node_modules"
     ]
   }

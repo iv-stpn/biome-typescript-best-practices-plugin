@@ -1,5 +1,7 @@
 # biome-typescript-best-practices-plugin
 
+[![npm](https://img.shields.io/npm/v/biome-typescript-best-practices-plugin.svg)](https://www.npmjs.com/package/biome-typescript-best-practices-plugin)
+
 A [Biome](https://biomejs.dev) plugin (written in [GritQL](https://biomejs.dev/blog/gritql-biome)) that
 enforces TypeScript best practices **not covered by Biome's recommended linter** — catching the patterns
 that quietly bypass the type checker, walk the prototype chain, or sort your numbers wrong.
@@ -32,9 +34,11 @@ delete obj.prop;                                 // static key is fine
 | `ts/no-enum` | `enum` and `const enum` declarations | Enums emit runtime code with surprising semantics; `const enum` breaks `isolatedModules`. |
 | `ts/no-dynamic-delete` | `delete obj[expr]` with a computed, non-literal key | Deleting a dynamic key deoptimises the object shape and usually means a `Map` was wanted. |
 | `ts/require-array-sort-compare` | `.sort()` / `.toSorted()` with no comparator | Default sort is by UTF-16 code unit, so numbers come out in the wrong order. |
+| `ts/no-inline-object-param-type` | an inline object type on a function parameter | Anonymous inline types can't be reused, show up nameless in errors/tooltips, and bloat signatures. **Has an unsafe auto-fix.** |
 
-All rules report a diagnostic only (severity `warn`, category `plugin`); none apply an auto-fix, because the
-correct repair is context-specific — the plugin flags the hazard and leaves the fix to you.
+All rules report a diagnostic (severity `warn`, category `plugin`). Most report only — the correct repair
+is context-specific, so the plugin flags the hazard and leaves the fix to you. One rule,
+`ts/no-inline-object-param-type`, ships an **unsafe** auto-fix (see its section for why it's unsafe).
 
 These rules are intentionally **not** duplicates of Biome's recommended set (which already covers
 `noExplicitAny`, `noNonNullAssertion`, `noDoubleEquals`, and similar). They fill gaps that otherwise need
@@ -144,6 +148,46 @@ strings.sort();           // NOTE: also flagged — see limitations
 unit, so `[3, 20, 100]` sorts to `[100, 20, 3]`. Passing an explicit comparator makes the order intentional
 and correct.
 
+### ts/no-inline-object-param-type
+
+```ts
+// flagged
+function fn(obj: { test: string; age: number }) {
+  return obj.test;
+}
+
+// after `biome lint --write --unsafe`
+type ObjParam = { test: string; age: number };
+function fn(obj: ObjParam) {
+  return obj.test;
+}
+
+// safe (nothing to extract)
+type Named = { z: number };
+function already(n: Named) {}
+function destructured({ a, b }: { a: number; b: string }) {}   // no name to derive — skipped
+```
+
+An object type inlined into a parameter list can't be reused, appears anonymously in errors and tooltips
+(`{ test: string; age: number }` instead of `ObjParam`), and bloats the signature. This rule extracts it into
+a named `type` alias declared immediately before the enclosing statement. TypeScript hoists type aliases, so
+declaring the alias before the function is always valid.
+
+This is the one rule with an **auto-fix**, applied only under `--write --unsafe`. It works on function
+declarations, and arrow / function expressions bound in a variable statement. Functions with several
+inline-object params are fixed one per pass until none remain. The rewrite is scoped to the parameter list, so
+a matching **return** type (e.g. `(o: { a: number }): { a: number }`) is left untouched.
+
+**Why unsafe.** The alias name is derived from the parameter name (`obj` → `ObjParam`), so two parameters that
+share a name across a file (say two `o`s) both extract to `type OParam` — a duplicate-identifier error you
+resolve by hand. Destructured params (`{ a, b }: { … }`) have no name to derive from and are skipped.
+
+> Implementation note: the fix is a single self-contained edit per match (a manual string-splice via GritQL's
+> `split`/`join` that rebuilds the host statement with the inline type replaced, then prepends the alias). A
+> more natural "swap the type *and* prepend to the enclosing statement" pair of nested rewrites produces
+> overlapping edits that make Biome's `--write` fix loop hang whenever a file has 2+ matches; one
+> non-overlapping edit per match always terminates.
+
 ## Limitations
 
 The plugin matches **structure, not types** — it keys off method and operator shapes, not the static type of
@@ -223,6 +267,13 @@ The plugin is one Biome GritQL file, [typescript.grit](typescript.grit).
 - `no-dynamic-delete` matches `delete $target` where `$target` is a `JsComputedMemberExpression` whose key is
   not a string or number literal.
 - `require-array-sort-compare` matches a `sort`/`toSorted` call with an empty argument list (`$args <: []`).
+- `no-inline-object-param-type` matches a `JsFunctionDeclaration` (or a `JsVariableStatement` holding an
+  arrow / function expression) that `contains` a `JsFormalParameter` whose binding is a `JsIdentifierBinding`
+  and whose annotation is a `TsObjectType`. The fix is a single self-contained edit on the host statement:
+  it derives the alias name with `capitalize` + `join`, then rebuilds the host text with the inline type
+  swapped for the name via `split`/`join` (a manual string-replace scoped to the parameters text) and
+  prepends the `type` alias. A single non-overlapping edit per match is required — a nested
+  "swap-plus-prepend" rewrite makes Biome's `--write` fix loop hang on files with 2+ matches.
 
 ## Releasing
 
