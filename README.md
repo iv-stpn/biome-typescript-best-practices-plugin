@@ -14,6 +14,7 @@ items.reduce((acc, x) => acc, {});               // `{}` accumulator leaks proto
 enum Color { Red, Green }                        // enum emits runtime code
 delete obj[key];                                 // dynamic delete deoptimises shape
 [3, 20, 100].sort();                             // lexicographic → [100, 20, 3]
+function fn(o: { a: number }): { b: string } {}  // inline object param/return types (unsafe auto-fix)
 
 // safe
 const el = getEl();                              // narrow with a type guard, or `satisfies`
@@ -22,6 +23,9 @@ items.reduce((acc, x) => acc.set(x.k, x.v), new Map());
 const Color = { Red: "red", Green: "green" } as const;
 delete obj.prop;                                 // static key is fine
 [3, 20, 100].sort((a, b) => a - b);
+type OParam = { a: number };
+type FnReturn = { b: string };
+function fn(o: OParam): FnReturn {}              // extracted to named type aliases
 ```
 
 ## Rules
@@ -35,10 +39,12 @@ delete obj.prop;                                 // static key is fine
 | `ts/no-dynamic-delete` | `delete obj[expr]` with a computed, non-literal key | Deleting a dynamic key deoptimises the object shape and usually means a `Map` was wanted. |
 | `ts/require-array-sort-compare` | `.sort()` / `.toSorted()` with no comparator | Default sort is by UTF-16 code unit, so numbers come out in the wrong order. |
 | `ts/no-inline-object-param-type` | an inline object type on a function parameter | Anonymous inline types can't be reused, show up nameless in errors/tooltips, and bloat signatures. **Has an unsafe auto-fix.** |
+| `ts/no-inline-object-return-type` | an inline object type as a function's return type | Same hazards as the param rule, on the return side. **Has an unsafe auto-fix.** |
 
 All rules report a diagnostic (severity `warn`, category `plugin`). Most report only — the correct repair
-is context-specific, so the plugin flags the hazard and leaves the fix to you. One rule,
-`ts/no-inline-object-param-type`, ships an **unsafe** auto-fix (see its section for why it's unsafe).
+is context-specific, so the plugin flags the hazard and leaves the fix to you. Two rules,
+`ts/no-inline-object-param-type` and `ts/no-inline-object-return-type`, ship an **unsafe** auto-fix (see
+their sections for why they're unsafe).
 
 These rules are intentionally **not** duplicates of Biome's recommended set (which already covers
 `noExplicitAny`, `noNonNullAssertion`, `noDoubleEquals`, and similar). They fill gaps that otherwise need
@@ -173,7 +179,7 @@ An object type inlined into a parameter list can't be reused, appears anonymousl
 a named `type` alias declared immediately before the enclosing statement. TypeScript hoists type aliases, so
 declaring the alias before the function is always valid.
 
-This is the one rule with an **auto-fix**, applied only under `--write --unsafe`. It works on function
+This rule has an **unsafe auto-fix**, applied only under `--write --unsafe`. It works on function
 declarations, and arrow / function expressions bound in a variable statement. Functions with several
 inline-object params are fixed one per pass until none remain. The rewrite is scoped to the parameter list, so
 a matching **return** type (e.g. `(o: { a: number }): { a: number }`) is left untouched.
@@ -187,6 +193,41 @@ resolve by hand. Destructured params (`{ a, b }: { … }`) have no name to deriv
 > more natural "swap the type *and* prepend to the enclosing statement" pair of nested rewrites produces
 > overlapping edits that make Biome's `--write` fix loop hang whenever a file has 2+ matches; one
 > non-overlapping edit per match always terminates.
+
+### ts/no-inline-object-return-type
+
+```ts
+// flagged
+function fn(): { test: string; age: number } {
+  return { test: "a", age: 1 };
+}
+
+// after `biome lint --write --unsafe`
+type FnReturn = { test: string; age: number };
+function fn(): FnReturn {
+  return { test: "a", age: 1 };
+}
+
+// safe (nothing to extract)
+type Result = { z: number };
+function named(): Result {}         // already a named type
+function inferred() { return 1; }   // no return annotation
+```
+
+The return-type counterpart to `ts/no-inline-object-param-type`. An inline object return type is anonymous in
+errors and tooltips and can't be reused; this rule extracts it into a named `type` alias declared just before
+the enclosing statement. The alias name is derived from the function or variable name (`fn` → `FnReturn`,
+`const build = (): { … }` → `BuildReturn`).
+
+Also an **unsafe auto-fix** under `--write --unsafe`, covering function declarations and arrow / function
+expressions bound in a variable statement. The rewrite is anchored on the parameter list immediately followed
+by the return annotation — a return annotation's text (`: { a: number }`) is identical to a param's, so this
+pairing is what keeps a param that shares the same object type (`(o: { a: number }): { a: number }`)
+untouched. A function with **both** an inline param type and an inline return type reports both diagnostics
+and, under `--write --unsafe`, is fixed across successive passes until neither remains.
+
+**Why unsafe.** Same collision hazard: two functions named `fn` in different scopes both extract
+`type FnReturn`, a duplicate-identifier error to resolve by hand.
 
 ## Limitations
 
@@ -274,6 +315,13 @@ The plugin is one Biome GritQL file, [typescript.grit](typescript.grit).
   swapped for the name via `split`/`join` (a manual string-replace scoped to the parameters text) and
   prepends the `type` alias. A single non-overlapping edit per match is required — a nested
   "swap-plus-prepend" rewrite makes Biome's `--write` fix loop hang on files with 2+ matches.
+- `no-inline-object-return-type` is the return-type counterpart: it matches the same hosts via
+  `return_type_annotation = TsReturnTypeAnnotation(ty = TsObjectType())` and derives the alias from the
+  function/variable name (`fn` → `FnReturn`). Because a return annotation's text is identical to a param's,
+  the string-splice is anchored on the parameters text (including its `)`) immediately followed by the return
+  annotation — a pairing that occurs only at the return, so a param sharing the same object text is untouched.
+- The top-level combinator is `any` (not `or`), so a function with both an inline param type and an inline
+  return type reports both diagnostics instead of only the first.
 
 ## Releasing
 
