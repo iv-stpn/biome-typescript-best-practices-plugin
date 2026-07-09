@@ -4,10 +4,11 @@ language js
 // biome-typescript-best-practices-plugin: TypeScript safety & clarity rules.
 //
 // A set of best-practice checks that are NOT part of Biome's default/recommended
-// linter but that push TypeScript towards safer, clearer code. Most rules report
-// a diagnostic only (no auto-fix): the correct rewrite is context-specific, so the
-// plugin flags the hazard and leaves the fix to the author. One rule
-// (ts/no-inline-object-param-type) ships an UNSAFE auto-fix.
+// linter but that push TypeScript towards safer, clearer code. Every rule reports a
+// diagnostic only — the plugin never applies an auto-fix. (A GritQL `--write` rewrite
+// hangs Biome's fix loop on files with 2+ matches and can't do scope-aware,
+// collision-free naming, so the two extraction rules ship their fixes as standalone
+// TypeScript codemods instead — see the `fixers/` directory and the README.)
 //
 // Rules:
 //   ts/no-as-cast                 — `expr as T` type assertions (bypasses the checker).
@@ -17,9 +18,9 @@ language js
 //   ts/no-dynamic-delete          — `delete obj[expr]` with a computed, non-literal key.
 //   ts/require-array-sort-compare — `.sort()` / `.toSorted()` with no comparator.
 //   ts/no-inline-object-param-type — inline object type on a function parameter
-//                                    (UNSAFE auto-fix: extracts it to a named `type` alias).
+//                                    (fixable via fixers/extract-object-param-types.ts).
 //   ts/no-inline-object-return-type — inline object type as a function return type
-//                                    (UNSAFE auto-fix: extracts it to a named `type` alias).
+//                                    (fixable via fixers/extract-object-return-types.ts).
 //
 // The top-level combinator is `any` (not `or`): independent rules can match the same
 // node (e.g. a function with both an inline param type and an inline return type), and
@@ -142,138 +143,47 @@ any {
         )
     },
 
-    // Rule: ts/no-inline-object-param-type   (UNSAFE auto-fix)
+    // Rule: ts/no-inline-object-param-type   (diagnostic only — see fixers/)
     // Bad:  function fn(obj: { test: string; age: number }) { ... }
     // Good: type ObjParam = { test: string; age: number };
     //       function fn(obj: ObjParam) { ... }
     // An inline object type buried in a parameter list can't be reused, shows up
-    // anonymously in errors/tooltips, and bloats the signature. Extracting it to a
-    // named `type` alias (declared just before the enclosing statement) keeps the
-    // signature readable and the type reusable. TypeScript hoists type aliases, so
-    // declaring it before the function is always valid.
+    // anonymously in errors/tooltips, and bloats the signature. Extract it to a
+    // named `type` alias declared just before the enclosing statement.
     //
-    // The fix is a SINGLE self-contained edit per match: it rebuilds the host
-    // statement's text with the inline type replaced by the derived alias name
-    // (a manual string-splice via split()/join()) and prepends the alias. This is
-    // deliberate — a nested "swap the type + prepend to the enclosing statement"
-    // rewrite produces overlapping edits that make Biome's `--write` fix loop hang
-    // whenever a file has 2+ matches. A single non-overlapping edit per match always
-    // terminates. The replace is scoped to the *parameters* text so a matching return
-    // type (e.g. `(o: {a:number}): {a:number}`) is left untouched.
-    //
-    // UNSAFE because the alias name is derived from the parameter name
-    // (`obj` → `ObjParam`): two params sharing a name (e.g. two `o`s) produce two
-    // `type OParam` declarations — a duplicate-identifier error to resolve by hand.
-    // Destructured params (`{ a, b }: {...}`) are skipped (no name to derive from).
-    or {
-        // function declaration: the declaration itself is the host statement.
-        JsFunctionDeclaration(parameters = $params) as $host where {
-            $params <: contains JsFormalParameter(
-                binding = JsIdentifierBinding() as $b,
-                type_annotation = TsTypeAnnotation(ty = TsObjectType() as $ot)
-            ),
-            $name = join(list = [capitalize($b), `Param`], separator = ``),
-            $objtext = text($ot),
-            $paramstext = text($params),
-            $newparams = join(list = split($paramstext, $objtext), separator = $name),
-            $newhost = join(list = split(text($host), $paramstext), separator = $newparams),
-            $host => `type $name = $objtext;\n$newhost`,
-            register_diagnostic(
-                span = $ot,
-                message = "[ts/no-inline-object-param-type] Avoid inlining an object type on a function parameter — extract it to a named `type` alias. Named types are reusable, appear by name in errors and tooltips, and keep the signature readable.",
-                severity = "warn",
-                fix_kind = "unsafe"
-            )
-        },
-        // arrow / function expression bound in a variable statement: the whole
-        // statement is the host (so the alias lands before `const foo = ...`).
-        JsVariableStatement() as $host where {
-            $host <: contains JsParameters(
-                items = contains JsFormalParameter(
-                    binding = JsIdentifierBinding() as $b,
-                    type_annotation = TsTypeAnnotation(ty = TsObjectType() as $ot)
-                )
-            ) as $params,
-            $name = join(list = [capitalize($b), `Param`], separator = ``),
-            $objtext = text($ot),
-            $paramstext = text($params),
-            $newparams = join(list = split($paramstext, $objtext), separator = $name),
-            $newhost = join(list = split(text($host), $paramstext), separator = $newparams),
-            $host => `type $name = $objtext;\n$newhost`,
-            register_diagnostic(
-                span = $ot,
-                message = "[ts/no-inline-object-param-type] Avoid inlining an object type on a function parameter — extract it to a named `type` alias. Named types are reusable, appear by name in errors and tooltips, and keep the signature readable.",
-                severity = "warn",
-                fix_kind = "unsafe"
-            )
-        }
+    // This rule only REPORTS. The fix is applied by a standalone codemod run with
+    // Bun (fixers/extract-object-param-types.ts), NOT by `biome lint --write`. A
+    // GritQL rewrite here is a poor fit: a nested "swap the type + prepend an alias"
+    // edit hangs Biome's `--write` fix loop on files with 2+ matches, and GritQL
+    // can't derive collision-free, scope-aware alias names. The TypeScript-compiler
+    // codemod does the whole file in one pass with unique names — see the README.
+    JsFormalParameter(
+        binding = JsIdentifierBinding(),
+        type_annotation = TsTypeAnnotation(ty = TsObjectType() as $ot)
+    ) where {
+        register_diagnostic(
+            span = $ot,
+            message = "[ts/no-inline-object-param-type] Avoid inlining an object type on a function parameter — extract it to a named `type` alias. Named types are reusable, appear by name in errors and tooltips, and keep the signature readable. Auto-fix with: bun run <plugin>/fixers/extract-object-param-types.ts <path>",
+            severity = "warn"
+        )
     },
 
-    // Rule: ts/no-inline-object-return-type   (UNSAFE auto-fix)
+    // Rule: ts/no-inline-object-return-type   (diagnostic only — see fixers/)
     // Bad:  function fn(): { test: string; age: number } { ... }
     // Good: type FnReturn = { test: string; age: number };
     //       function fn(): FnReturn { ... }
     // The return-type counterpart to ts/no-inline-object-param-type. An inline
-    // object return type is anonymous in errors/tooltips and can't be reused; this
-    // extracts it to a named `type` alias (name derived from the function/variable
-    // name: `fn` → `FnReturn`) declared just before the enclosing statement.
+    // object return type is anonymous in errors/tooltips and can't be reused;
+    // extract it to a named `type` alias.
     //
-    // Same single-edit-per-match string-splice as the param rule (a nested rewrite
-    // would hang Biome's `--write` loop on 2+ matches). The edit is anchored on the
-    // parameters text (including its `)`) immediately followed by the return-type
-    // annotation, because a return annotation's text (`: { a: number }`) is identical
-    // to a param's — that pairing only occurs at the return, so a param sharing the
-    // same object text (e.g. `(o: {a:number}): {a:number}`) is left untouched.
-    //
-    // UNSAFE for the same reason: derived alias names can collide (two functions
-    // named `fn` in different scopes both extract `type FnReturn`). A function with
-    // both an inline param type AND an inline return type reports both diagnostics
-    // (thanks to the top-level `any`) and, under `--write --unsafe`, is fixed across
-    // successive passes until neither remains.
-    or {
-        // function declaration: alias name from the function `id`.
-        JsFunctionDeclaration(
-            id = $id,
-            parameters = $params,
-            return_type_annotation = TsReturnTypeAnnotation(ty = TsObjectType() as $rt) as $ann
-        ) as $host where {
-            $name = join(list = [capitalize($id), `Return`], separator = ``),
-            $objtext = text($rt),
-            $anntext = text($ann),
-            $paramstext = text($params),
-            $newann = join(list = split($anntext, $objtext), separator = $name),
-            $anchor = join(list = [$paramstext, $anntext], separator = ``),
-            $newanchor = join(list = [$paramstext, $newann], separator = ``),
-            $newhost = join(list = split(text($host), $anchor), separator = $newanchor),
-            $host => `type $name = $objtext;\n$newhost`,
-            register_diagnostic(
-                span = $rt,
-                message = "[ts/no-inline-object-return-type] Avoid inlining an object type as a function's return type — extract it to a named `type` alias. Named types are reusable and appear by name in errors and tooltips.",
-                severity = "warn",
-                fix_kind = "unsafe"
-            )
-        },
-        // arrow / function expression bound in a variable statement: alias name from
-        // the variable name (`const foo = (): {...} => ...` → `FooReturn`).
-        JsVariableStatement() as $host where {
-            $host <: contains JsVariableDeclarator(id = JsIdentifierBinding() as $vid),
-            $host <: contains JsParameters() as $params,
-            $host <: contains TsReturnTypeAnnotation(ty = TsObjectType() as $rt) as $ann,
-            $name = join(list = [capitalize($vid), `Return`], separator = ``),
-            $objtext = text($rt),
-            $anntext = text($ann),
-            $paramstext = text($params),
-            $newann = join(list = split($anntext, $objtext), separator = $name),
-            $anchor = join(list = [$paramstext, $anntext], separator = ``),
-            $newanchor = join(list = [$paramstext, $newann], separator = ``),
-            $newhost = join(list = split(text($host), $anchor), separator = $newanchor),
-            $host => `type $name = $objtext;\n$newhost`,
-            register_diagnostic(
-                span = $rt,
-                message = "[ts/no-inline-object-return-type] Avoid inlining an object type as a function's return type — extract it to a named `type` alias. Named types are reusable and appear by name in errors and tooltips.",
-                severity = "warn",
-                fix_kind = "unsafe"
-            )
-        }
+    // Reports only; the fix is the Bun codemod fixers/extract-object-return-types.ts
+    // (same rationale as the param rule above). A function with both an inline param
+    // type AND an inline return type reports both diagnostics (top-level `any`).
+    TsReturnTypeAnnotation(ty = TsObjectType() as $rt) where {
+        register_diagnostic(
+            span = $rt,
+            message = "[ts/no-inline-object-return-type] Avoid inlining an object type as a function's return type — extract it to a named `type` alias. Named types are reusable and appear by name in errors and tooltips. Auto-fix with: bun run <plugin>/fixers/extract-object-return-types.ts <path>",
+            severity = "warn"
+        )
     }
 }

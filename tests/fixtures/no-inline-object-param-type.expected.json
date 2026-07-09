@@ -3,6 +3,7 @@
   { "line": 5, "rule": "no-inline-object-param-type" },
   { "line": 7, "rule": "no-inline-object-param-type" },
   { "line": 11, "rule": "no-inline-object-param-type" },
+  { "line": 11, "rule": "no-inline-object-param-type" },
   { "line": 15, "rule": "no-inline-object-param-type" },
   { "line": 19, "rule": "no-inline-object-param-type" }
 ]

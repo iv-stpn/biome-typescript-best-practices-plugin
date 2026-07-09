@@ -14,7 +14,7 @@ items.reduce((acc, x) => acc, {});               // `{}` accumulator leaks proto
 enum Color { Red, Green }                        // enum emits runtime code
 delete obj[key];                                 // dynamic delete deoptimises shape
 [3, 20, 100].sort();                             // lexicographic → [100, 20, 3]
-function fn(o: { a: number }): { b: string } {}  // inline object param/return types (unsafe auto-fix)
+function fn(o: { a: number }): { b: string } {}  // inline object param/return types (fixable via script)
 
 // safe
 const el = getEl();                              // narrow with a type guard, or `satisfies`
@@ -38,13 +38,13 @@ function fn(o: OParam): FnReturn {}              // extracted to named type alia
 | `ts/no-enum` | `enum` and `const enum` declarations | Enums emit runtime code with surprising semantics; `const enum` breaks `isolatedModules`. |
 | `ts/no-dynamic-delete` | `delete obj[expr]` with a computed, non-literal key | Deleting a dynamic key deoptimises the object shape and usually means a `Map` was wanted. |
 | `ts/require-array-sort-compare` | `.sort()` / `.toSorted()` with no comparator | Default sort is by UTF-16 code unit, so numbers come out in the wrong order. |
-| `ts/no-inline-object-param-type` | an inline object type on a function parameter | Anonymous inline types can't be reused, show up nameless in errors/tooltips, and bloat signatures. **Has an unsafe auto-fix.** |
-| `ts/no-inline-object-return-type` | an inline object type as a function's return type | Same hazards as the param rule, on the return side. **Has an unsafe auto-fix.** |
+| `ts/no-inline-object-param-type` | an inline object type on a function parameter | Anonymous inline types can't be reused, show up nameless in errors/tooltips, and bloat signatures. **Fixable with a script.** |
+| `ts/no-inline-object-return-type` | an inline object type as a function's return type | Same hazards as the param rule, on the return side. **Fixable with a script.** |
 
-All rules report a diagnostic (severity `warn`, category `plugin`). Most report only — the correct repair
-is context-specific, so the plugin flags the hazard and leaves the fix to you. Two rules,
-`ts/no-inline-object-param-type` and `ts/no-inline-object-return-type`, ship an **unsafe** auto-fix (see
-their sections for why they're unsafe).
+All rules report a diagnostic (severity `warn`, category `plugin`) and apply **no** `biome lint --write` fix —
+the correct repair is context-specific, so the plugin flags the hazard and leaves the fix to you. Two rules,
+`ts/no-inline-object-param-type` and `ts/no-inline-object-return-type`, have a mechanical fix that ships as a
+standalone codemod you run with [Bun](https://bun.sh) — see [Fixing inline object types](#fixing-inline-object-types).
 
 These rules are intentionally **not** duplicates of Biome's recommended set (which already covers
 `noExplicitAny`, `noNonNullAssertion`, `noDoubleEquals`, and similar). They fill gaps that otherwise need
@@ -162,7 +162,7 @@ function fn(obj: { test: string; age: number }) {
   return obj.test;
 }
 
-// after `biome lint --write --unsafe`
+// after the fixer script (see "Fixing" below)
 type ObjParam = { test: string; age: number };
 function fn(obj: ObjParam) {
   return obj.test;
@@ -175,24 +175,15 @@ function destructured({ a, b }: { a: number; b: string }) {}   // no name to der
 ```
 
 An object type inlined into a parameter list can't be reused, appears anonymously in errors and tooltips
-(`{ test: string; age: number }` instead of `ObjParam`), and bloats the signature. This rule extracts it into
-a named `type` alias declared immediately before the enclosing statement. TypeScript hoists type aliases, so
-declaring the alias before the function is always valid.
+(`{ test: string; age: number }` instead of `ObjParam`), and bloats the signature. Extract it into a named
+`type` alias declared immediately before the enclosing statement. TypeScript hoists type aliases, so declaring
+the alias before the function is always valid.
 
-This rule has an **unsafe auto-fix**, applied only under `--write --unsafe`. It works on function
-declarations, and arrow / function expressions bound in a variable statement. Functions with several
-inline-object params are fixed one per pass until none remain. The rewrite is scoped to the parameter list, so
-a matching **return** type (e.g. `(o: { a: number }): { a: number }`) is left untouched.
-
-**Why unsafe.** The alias name is derived from the parameter name (`obj` → `ObjParam`), so two parameters that
-share a name across a file (say two `o`s) both extract to `type OParam` — a duplicate-identifier error you
-resolve by hand. Destructured params (`{ a, b }: { … }`) have no name to derive from and are skipped.
-
-> Implementation note: the fix is a single self-contained edit per match (a manual string-splice via GritQL's
-> `split`/`join` that rebuilds the host statement with the inline type replaced, then prepends the alias). A
-> more natural "swap the type *and* prepend to the enclosing statement" pair of nested rewrites produces
-> overlapping edits that make Biome's `--write` fix loop hang whenever a file has 2+ matches; one
-> non-overlapping edit per match always terminates.
+The rule itself only **reports** — it applies no `biome lint --write` fix. The fix is a separate codemod you
+run with [Bun](https://bun.sh), [`extract-object-param-types.ts`](fixers/extract-object-param-types.ts) (see
+[Fixing](#fixing)). It handles function declarations and arrow / function expressions bound in a variable
+statement, derives the alias name from the parameter (`obj` → `ObjParam`), and de-duplicates names that collide
+(`OParam`, `OParam2`, …). Destructured params (`{ a, b }: { … }`) have no name to derive from and are skipped.
 
 ### ts/no-inline-object-return-type
 
@@ -202,7 +193,7 @@ function fn(): { test: string; age: number } {
   return { test: "a", age: 1 };
 }
 
-// after `biome lint --write --unsafe`
+// after the fixer script (see "Fixing" below)
 type FnReturn = { test: string; age: number };
 function fn(): FnReturn {
   return { test: "a", age: 1 };
@@ -215,19 +206,58 @@ function inferred() { return 1; }   // no return annotation
 ```
 
 The return-type counterpart to `ts/no-inline-object-param-type`. An inline object return type is anonymous in
-errors and tooltips and can't be reused; this rule extracts it into a named `type` alias declared just before
-the enclosing statement. The alias name is derived from the function or variable name (`fn` → `FnReturn`,
+errors and tooltips and can't be reused; extract it into a named `type` alias declared just before the
+enclosing statement. The alias name is derived from the function or variable name (`fn` → `FnReturn`,
 `const build = (): { … }` → `BuildReturn`).
 
-Also an **unsafe auto-fix** under `--write --unsafe`, covering function declarations and arrow / function
-expressions bound in a variable statement. The rewrite is anchored on the parameter list immediately followed
-by the return annotation — a return annotation's text (`: { a: number }`) is identical to a param's, so this
-pairing is what keeps a param that shares the same object type (`(o: { a: number }): { a: number }`)
-untouched. A function with **both** an inline param type and an inline return type reports both diagnostics
-and, under `--write --unsafe`, is fixed across successive passes until neither remains.
+Also **report-only**, fixed by the companion codemod
+[`extract-object-return-types.ts`](fixers/extract-object-return-types.ts) (see [Fixing](#fixing)). It covers
+function declarations and arrow / function expressions bound in a variable statement. A function with **both**
+an inline param type and an inline return type is reported by both rules; running both fixers (or the codemod
+with both extractions enabled) fixes them together, giving a parameter and its identically-typed return
+distinct aliases (`OParam` and `SameReturn`).
 
-**Why unsafe.** Same collision hazard: two functions named `fn` in different scopes both extract
-`type FnReturn`, a duplicate-identifier error to resolve by hand.
+## Fixing
+
+The two inline-object rules **report only** — `biome lint --write` (even `--write --unsafe`) applies nothing.
+The fix is a pair of standalone [TypeScript](https://www.typescriptlang.org) codemods you run with
+[Bun](https://bun.sh), shipped inside the package under `fixers/`:
+
+```sh
+# extract inline object PARAMETER types → named `type` aliases
+bun run node_modules/biome-typescript-best-practices-plugin/fixers/extract-object-param-types.ts src
+
+# extract inline object RETURN types
+bun run node_modules/biome-typescript-best-practices-plugin/fixers/extract-object-return-types.ts src
+```
+
+Each takes any mix of files and directories (directories are walked; `node_modules`, `.git`, build output,
+and `.d.ts` files are skipped) and rewrites them in place. Flags:
+
+- `--check` — write nothing; exit `1` if any file *would* change (use in CI).
+- `--dry` — write nothing; print what would change.
+
+```sh
+# CI guard: fail if anything still has inline object param types
+bun run node_modules/biome-typescript-best-practices-plugin/fixers/extract-object-param-types.ts --check src
+```
+
+**Why a codemod instead of `biome lint --write`?** A GritQL `--write` rewrite is the wrong tool for this
+particular fix on two counts, both of which the codemod sidesteps:
+
+- **It hangs.** Extracting a type needs two edits — swap the inline type for a name *and* prepend the alias to
+  the enclosing statement. As nested/overlapping edits, Biome's `--write` fix loop cannot reconcile them and
+  spins forever once a file has 2+ matches.
+- **It can't name safely.** GritQL has no symbol table, so it can't dedupe collisions (two params named `o`
+  would both become `type OParam`) or know which names are already taken.
+
+The codemod runs over a real TypeScript program: it fixes an entire file in one pass, derives collision-free
+names (`OParam`, `OParam2`, …), places each alias in the correct scope (nested functions get a block-local
+alias; class methods hoist the alias just before the class), and leaves a parameter whose object text happens
+to match the return type untouched. The output is idempotent and type-checks.
+
+> Prefer not to add Bun? The codemod is plain TypeScript with a single `typescript` peer dependency — run it
+> with any TS runner (`tsx`, `ts-node`, or compile it) by pointing at the same `fixers/*.ts` entry points.
 
 ## Limitations
 
@@ -308,20 +338,26 @@ The plugin is one Biome GritQL file, [typescript.grit](typescript.grit).
 - `no-dynamic-delete` matches `delete $target` where `$target` is a `JsComputedMemberExpression` whose key is
   not a string or number literal.
 - `require-array-sort-compare` matches a `sort`/`toSorted` call with an empty argument list (`$args <: []`).
-- `no-inline-object-param-type` matches a `JsFunctionDeclaration` (or a `JsVariableStatement` holding an
-  arrow / function expression) that `contains` a `JsFormalParameter` whose binding is a `JsIdentifierBinding`
-  and whose annotation is a `TsObjectType`. The fix is a single self-contained edit on the host statement:
-  it derives the alias name with `capitalize` + `join`, then rebuilds the host text with the inline type
-  swapped for the name via `split`/`join` (a manual string-replace scoped to the parameters text) and
-  prepends the `type` alias. A single non-overlapping edit per match is required — a nested
-  "swap-plus-prepend" rewrite makes Biome's `--write` fix loop hang on files with 2+ matches.
-- `no-inline-object-return-type` is the return-type counterpart: it matches the same hosts via
-  `return_type_annotation = TsReturnTypeAnnotation(ty = TsObjectType())` and derives the alias from the
-  function/variable name (`fn` → `FnReturn`). Because a return annotation's text is identical to a param's,
-  the string-splice is anchored on the parameters text (including its `)`) immediately followed by the return
-  annotation — a pairing that occurs only at the return, so a param sharing the same object text is untouched.
+- `no-inline-object-param-type` matches a `JsFormalParameter` whose binding is a `JsIdentifierBinding` and
+  whose annotation is a `TsObjectType`, and reports on that type node.
+- `no-inline-object-return-type` matches a `TsReturnTypeAnnotation(ty = TsObjectType())` and reports on that
+  type node.
 - The top-level combinator is `any` (not `or`), so a function with both an inline param type and an inline
   return type reports both diagnostics instead of only the first.
+
+Both inline-object rules are **report-only**: GritQL is a poor fit for their fix (a nested "swap the type +
+prepend an alias" rewrite hangs Biome's `--write` loop on files with 2+ matches, and GritQL can't derive
+collision-free, scope-aware alias names). The fix instead lives in [fixers/](fixers/) — standalone
+TypeScript-compiler codemods run with Bun:
+
+- [`fixers/lib.ts`](fixers/lib.ts) is the shared engine. It parses the file, collects existing type/interface
+  names, walks the AST for inline object types on parameters (`fn(o: { … })`) and return positions
+  (`fn(): { … }`), derives an alias name (`obj` → `ObjParam`, `fn` → `FnReturn`), de-duplicates against
+  existing and generated names with numeric suffixes, and applies all edits right-to-left in one pass —
+  inserting each `type` alias before the nearest enclosing statement in a block-like scope (so nested-function
+  and class-method aliases land in a valid place).
+- [`extract-object-param-types.ts`](fixers/extract-object-param-types.ts) and
+  [`extract-object-return-types.ts`](fixers/extract-object-return-types.ts) are thin CLIs over `runCli`.
 
 ## Releasing
 

@@ -12,6 +12,9 @@
         "husky": "^9.1.7",
         "typescript": "^6",
       },
+      "peerDependencies": {
+        "typescript": ">=5.0.0",
+      },
     },
   },
   "packages": {

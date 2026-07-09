@@ -24,13 +24,16 @@
   },
   "files": [
     "typescript.grit",
+    "fixers/lib.ts",
+    "fixers/extract-object-param-types.ts",
+    "fixers/extract-object-return-types.ts",
     "README.md",
     "CHANGELOG.md"
   ],
   "scripts": {
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "test": "node scripts/run-tests.mjs",
+    "test": "node scripts/run-tests.mjs && bun run fixers/run-tests.ts",
     "typecheck": "tsc --noEmit",
     "prepare": "husky",
     "version": "changeset version",
@@ -38,6 +41,9 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": ">=2.5.3",
