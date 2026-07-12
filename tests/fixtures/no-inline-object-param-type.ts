@@ -19,3 +19,8 @@ function opt(o?: { maybe: boolean }) {
 const fnExpr = function (o: { e: number }) {
 	return o.e;
 };
+
+// Destructured binding with inline object type — still an inline type, should be flagged.
+function destructured({ a, b }: { a: number; b: string }) {
+	return a + b.length;
+}

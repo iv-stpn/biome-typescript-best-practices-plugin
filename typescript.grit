@@ -158,7 +158,6 @@ any {
     // can't derive collision-free, scope-aware alias names. The TypeScript-compiler
     // codemod does the whole file in one pass with unique names — see the README.
     JsFormalParameter(
-        binding = JsIdentifierBinding(),
         type_annotation = TsTypeAnnotation(ty = TsObjectType() as $ot)
     ) where {
         register_diagnostic(
