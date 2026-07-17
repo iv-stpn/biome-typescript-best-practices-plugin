@@ -20,7 +20,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
-import ts from "typescript";
+import ts from "@typescript/typescript6";
 
 /** A 1-based line/column position, as reported by Biome's JSON reporter. */
 interface Pos {
