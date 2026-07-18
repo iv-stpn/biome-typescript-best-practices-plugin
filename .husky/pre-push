@@ -1,0 +1,11 @@
+# Ensure bun.lock is up to date with package.json before pushing.
+# If it's stale, refresh it, commit the new lockfile, and abort the push
+# so the lockfile commit gets included when you re-push.
+if ! bun install --frozen-lockfile >/dev/null 2>&1; then
+  echo "pre-push: bun.lock is out of date — running bun i to refresh it"
+  bun i
+  git add bun.lock
+  git commit -m "chore: update bun.lock" --no-verify
+  echo "pre-push: committed updated bun.lock — please re-run your push"
+  exit 1
+fi
