@@ -293,8 +293,11 @@ Run them _after_ `biome check --write .` so Biome's formatting settles first; th
 fixer's output is then tidied by Biome's formatter on your next
 `biome check --write`.
 
-> The fixers are plain TypeScript with a single `typescript` peer dependency (and
-> they spawn your installed Biome). Prefer another runner? Point `tsx`/`ts-node`
+> The fixers are plain TypeScript with a single runtime dependency —
+> [`@typescript/typescript6`](https://www.npmjs.com/package/@typescript/typescript6)
+> (the TypeScript compiler), declared as a regular `dependency` so it installs
+> automatically when you add this plugin. They also spawn your installed Biome to
+> read the plugin's own diagnostics. Prefer another runner? Point `tsx`/`ts-node`
 > at the same `fixers/*.ts` entry points.
 
 ### extract-object-param-types
@@ -348,6 +351,13 @@ Then run the linter:
 ```sh
 npx @biomejs/biome lint <files>
 ```
+
+The two inline-object rules (`no-inline-object-param-type` /
+`no-inline-object-return-type`) ship companion **fixer scripts** that extract
+the flagged inline types into named aliases. Because their only runtime
+dependency (`@typescript/typescript6`) is bundled with this package, the fixers
+work straight from `node_modules` with no extra install — see
+[Fixer scripts](#fixer-scripts) for details.
 
 Requires Biome **2.0+** (GritQL plugins landed in v2.0). Developed and tested
 against Biome 2.5.
