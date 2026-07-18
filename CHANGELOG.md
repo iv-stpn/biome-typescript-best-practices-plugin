@@ -1,5 +1,11 @@
 # biome-typescript-best-practices-plugin
 
+## 1.2.2
+
+### Patch Changes
+
+- 361e9ed: Upgrade to TypeScript 7 with minor refactors.
+
 ## 1.2.1
 
 ### Patch Changes
