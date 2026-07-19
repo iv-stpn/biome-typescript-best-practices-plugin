@@ -1,5 +1,13 @@
 # biome-typescript-best-practices-plugin
 
+## 1.2.3
+
+### Patch Changes
+
+- 901be8a: Move `@typescript/typescript6` from `devDependencies` to `dependencies` so the
+  fixer scripts work out of the box for consumers — installing the plugin now
+  provides the TypeScript compiler the fixers need, with no extra install step.
+
 ## 1.2.2
 
 ### Patch Changes
